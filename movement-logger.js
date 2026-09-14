@@ -48,14 +48,21 @@
   }
 
   function attemptSilentAccess(email){
-    acquireAccessToken("none",email).then(async()=>{hideLogin();await loadLogger();}).catch(()=>{if(email)setAuthStatus("Google account restored. Sheets access is waiting for permission.");});
+    acquireAccessToken("none",email).then(async()=>{hideLogin();await loadLogger();}).catch(()=>{if(email){setAuthStatus("Google account restored. Click below to finish connecting Sheets.");$("grant-access").classList.remove("hidden");}});
   }
 
   function acquireAccessToken(prompt="none",email){
     if(tokenRequestPromise)return tokenRequestPromise;
     tokenRequestPromise=new Promise((resolve,reject)=>{
-      const tokenClient=google.accounts.oauth2.initTokenClient({client_id:CONFIG.GOOGLE_CLIENT_ID,scope:CONFIG.OAUTH_SCOPES,callback:response=>{tokenRequestPromise=null;if(response.error){reject(new Error(`Google authorization failed: ${response.error}`));return;}state.accessToken=response.access_token;resolve(response.access_token);}});
+      let settled=false;
+      const finish=(fn,arg)=>{if(settled)return;settled=true;clearTimeout(watchdog);tokenRequestPromise=null;fn(arg);};
+      const tokenClient=google.accounts.oauth2.initTokenClient({client_id:CONFIG.GOOGLE_CLIENT_ID,scope:CONFIG.OAUTH_SCOPES,callback:response=>{if(response.error){finish(reject,new Error(`Google authorization failed: ${response.error}`));return;}state.accessToken=response.access_token;finish(resolve,response.access_token);}});
       tokenClient.requestAccessToken({prompt,login_hint:email||state.idTokenPayload?.email||readSavedSession()?.email||undefined});
+      // Safety net: if the popup gets blocked (common for prompt:"none" with no
+      // click behind it), Google never calls back and this promise would hang
+      // forever - permanently locking out every later login attempt, since a
+      // pending tokenRequestPromise is reused above. Time it out instead.
+      const watchdog=setTimeout(()=>finish(reject,new Error("Google authorization timed out (the popup may have been blocked).")),8000);
     });
     return tokenRequestPromise;
   }
